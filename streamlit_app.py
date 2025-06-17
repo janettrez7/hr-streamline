@@ -1,44 +1,38 @@
-
-import os
-import tempfile
+# streamlit_app.py
 import streamlit as st
+import zipfile
+import tempfile
+import os
 import pandas as pd
 from resume_scorer import process_and_score_resumes
 
-st.set_page_config(page_title="AI Resume Scorer", layout="centered")
-
+st.set_page_config(page_title="Resume Scorer", layout="centered")
 st.title("📄 AI Resume Scorer")
-st.markdown("Upload a single resume and input a job description (JD) to score match.")
+st.write("Upload a JD and a ZIP of resumes. Get scores based on the JD criteria.")
 
-jd_text = st.text_area("Paste the Job Description here", height=200)
-uploaded_resume = st.file_uploader("Upload a single resume PDF", type=["pdf"])
+jd_file = st.file_uploader("Upload Job Description (PDF/DOCX/TXT)", type=["pdf", "docx", "txt"])
+resume_zip = st.file_uploader("Upload Resumes (ZIP with PDF/DOCX files)", type="zip")
 
-if st.button("Run Scoring"):
-    if not jd_text or not uploaded_resume:
-        st.error("Please provide both a resume and job description.")
-    else:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            jd_path = os.path.join(tmpdir, "jd.txt")
-            with open(jd_path, "w") as f:
-                f.write(jd_text)
+if st.button("Run Scoring") and jd_file and resume_zip:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        jd_path = os.path.join(tmpdir, jd_file.name)
+        with open(jd_path, "wb") as f:
+            f.write(jd_file.read())
 
-            resume_path = os.path.join(tmpdir, uploaded_resume.name)
-            with open(resume_path, "wb") as f:
-                f.write(uploaded_resume.read())
+        zip_path = os.path.join(tmpdir, resume_zip.name)
+        with open(zip_path, "wb") as f:
+            f.write(resume_zip.read())
 
-            results_df = process_and_score_resumes(jd_path, [resume_path])
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(os.path.join(tmpdir, "resumes"))
 
+        results = process_and_score_resumes(jd_path, os.path.join(tmpdir, "resumes"))
+
+        if results.empty:
+            st.warning("No valid resumes processed or no match found with JD.")
+        else:
             st.success("Scoring Complete!")
-            st.dataframe(results_df[['Filename', 'Score']])
+            st.dataframe(results, use_container_width=True)
 
-            for _, row in results_df.iterrows():
-                st.subheader(f"Feedback for {row['Filename']}")
-                st.markdown(f"**Score:** {row['Score']}%")
-                st.markdown(f"**Feedback:**\n\n{row['JD Criteria Feedback']}")
-
-            st.download_button(
-                "Download Results as CSV",
-                data=results_df.to_csv(index=False),
-                file_name="scoring_results.csv",
-                mime="text/csv"
-            )
+            csv = results.to_csv(index=False).encode("utf-8")
+            st.download_button("Download Results as CSV", csv, "resume_scores.csv", "text/csv")
