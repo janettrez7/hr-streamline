@@ -1,29 +1,38 @@
+# streamlit_app.py
 import streamlit as st
 import zipfile
-import os
 import tempfile
-from resume_scorer import process_and_score_resumes
+import os
+import pandas as pd
+from resume_scorer import process_and_score_resumes_from_text
 
-st.title("🧠 Resume Scoring Tool")
-st.markdown("Upload a Job Description and a ZIP file of resumes to get scores.")
+st.set_page_config(page_title="Resume Scorer", layout="centered")
+st.title("📄 AI Resume Scorer")
+st.write("Enter Job Description and upload a ZIP of resumes. Get scores based on JD criteria.")
 
-jd_file = st.file_uploader("Upload Job Description (PDF or TXT)", type=["pdf", "txt"])
-resume_zip = st.file_uploader("Upload ZIP of Resumes (PDF or DOCX)", type="zip")
+# New: JD input as text box
+jd_text_input = st.text_area("Paste the Job Description here", height=250)
 
-if st.button("Score Resumes") and jd_file and resume_zip:
+# Upload resume ZIP
+resume_zip = st.file_uploader("Upload Resumes (ZIP with PDF/DOCX files)", type="zip")
+
+if st.button("Run Scoring") and jd_text_input and resume_zip:
     with tempfile.TemporaryDirectory() as tmpdir:
-        jd_path = os.path.join(tmpdir, jd_file.name)
         zip_path = os.path.join(tmpdir, resume_zip.name)
-
-        with open(jd_path, "wb") as f:
-            f.write(jd_file.read())
         with open(zip_path, "wb") as f:
             f.write(resume_zip.read())
 
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(os.path.join(tmpdir, "resumes"))
+            resume_dir = os.path.join(tmpdir, "resumes")
+            zip_ref.extractall(resume_dir)
 
-        results = process_and_score_resumes(jd_path, os.path.join(tmpdir, "resumes"))
+        results = process_and_score_resumes_from_text(jd_text_input, resume_dir)
 
-        st.success("Scoring Complete!")
-        st.dataframe(results)
+        if results.empty:
+            st.warning("No valid resumes processed or no match found with JD.")
+        else:
+            st.success("Scoring Complete!")
+            st.dataframe(results, use_container_width=True)
+
+            csv = results.to_csv(index=False).encode("utf-8")
+            st.download_button("Download Results as CSV", csv, "resume_scores.csv", "text/csv")
