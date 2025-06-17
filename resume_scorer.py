@@ -122,6 +122,8 @@ def process_and_score_resumes(jd_path, resumes_folder):
     jd_text = extract_text(jd_path)
     jd_criteria = extract_jd_criteria(jd_text)
 
+    print("JD Extracted Text:\n", jd_text[:1000])  # To verify JD was read
+
     scores = []
 
     for file in os.listdir(resumes_folder):
