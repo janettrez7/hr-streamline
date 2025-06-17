@@ -71,3 +71,8 @@ def process_and_score_resumes(jd_path, resume_dir):
 
     df = pd.DataFrame(scores)
     return df.sort_values(by="Score", ascending=False) if not df.empty else df
+
+def process_and_score_resumes_from_text(jd_text, resume_folder):
+    jd_keywords = parse_jd_text(jd_text)
+    return process_and_score_resumes(jd_keywords, resume_folder)
+
