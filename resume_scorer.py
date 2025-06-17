@@ -1,38 +1,58 @@
-# streamlit_app.py
-import streamlit as st
-import zipfile
-import tempfile
 import os
+import pdfplumber
+import docx
 import pandas as pd
-from resume_scorer import process_and_score_resumes
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-st.set_page_config(page_title="Resume Scorer", layout="centered")
-st.title("📄 AI Resume Scorer")
-st.write("Upload a JD and a ZIP of resumes. Get scores based on the JD criteria.")
+def extract_text(path):
+    try:
+        if path.endswith(".pdf"):
+            with pdfplumber.open(path) as pdf:
+                text = "\n".join(
+                    page.extract_text() or "" for page in pdf.pages
+                )
+                return text.strip()
+        elif path.endswith(".docx"):
+            doc = docx.Document(path)
+            return "\n".join(p.text for p in doc.paragraphs if p.text).strip()
+        elif path.endswith(".txt"):
+            with open(path, 'r') as f:
+                return f.read().strip()
+    except Exception as e:
+        print(f"Error reading {path}: {e}")
+    return ""
 
-jd_file = st.file_uploader("Upload Job Description (PDF/DOCX/TXT)", type=["pdf", "docx", "txt"])
-resume_zip = st.file_uploader("Upload Resumes (ZIP with PDF/DOCX files)", type="zip")
 
-if st.button("Run Scoring") and jd_file and resume_zip:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        jd_path = os.path.join(tmpdir, jd_file.name)
-        with open(jd_path, "wb") as f:
-            f.write(jd_file.read())
+def process_and_score_resumes(jd_path, resumes_folder):
+    jd_text = extract_text(jd_path)
+    if not jd_text:
+        return pd.DataFrame([{"Candidate": "JD not readable", "Score (out of 100)": 0}])
 
-        zip_path = os.path.join(tmpdir, resume_zip.name)
-        with open(zip_path, "wb") as f:
-            f.write(resume_zip.read())
+    scores = []
 
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(os.path.join(tmpdir, "resumes"))
+    for file in os.listdir(resumes_folder):
+        if not file.endswith((".pdf", ".docx")):
+            continue
 
-        results = process_and_score_resumes(jd_path, os.path.join(tmpdir, "resumes"))
+        resume_path = os.path.join(resumes_folder, file)
+        resume_text = extract_text(resume_path)
 
-        if results.empty:
-            st.warning("No valid resumes processed or no match found with JD.")
-        else:
-            st.success("Scoring Complete!")
-            st.dataframe(results, use_container_width=True)
+        if not resume_text:
+            print(f"Skipping {file}: no text found.")
+            continue  # skip empty or unreadable resumes
 
-            csv = results.to_csv(index=False).encode("utf-8")
-            st.download_button("Download Results as CSV", csv, "resume_scores.csv", "text/csv")
+        vectorizer = TfidfVectorizer(stop_words='english')
+        vectors = vectorizer.fit_transform([jd_text, resume_text])
+        score = cosine_similarity(vectors[0:1], vectors[1:2])[0][0] * 100
+
+        scores.append({
+            "Candidate": file,
+            "Score (out of 100)": round(score, 2)
+        })
+
+    if not scores:
+        return pd.DataFrame([{"Candidate": "No valid resumes found", "Score (out of 100)": 0}])
+
+    return pd.DataFrame(scores).sort_values(by="Score (out of 100)", ascending=False)
+
