@@ -1,15 +1,21 @@
-# resume_scorer.py
-import os, re
-import pdfplumber, docx
+import os
+import docx
+import pytesseract
+import pdfplumber
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from pdf2image import convert_from_path
+from PIL import Image
 
 def extract_text(path):
     try:
         if path.lower().endswith(".pdf"):
             with pdfplumber.open(path) as pdf:
-                return "\n".join(page.extract_text() or "" for page in pdf.pages).strip()
+                text = "\n".join((page.extract_text() or "") for page in pdf.pages).strip()
+            if not text:
+                print("🔁 Falling back to OCR for", path)
+                images = convert_from_path(path)
+                text = "\n".join(pytesseract.image_to_string(img) for img in images)
+            return text
         if path.lower().endswith(".docx"):
             doc = docx.Document(path)
             return "\n".join(p.text for p in doc.paragraphs if p.text).strip()
@@ -19,73 +25,44 @@ def extract_text(path):
         print(f"⚠️ Error reading {path}: {e}")
     return ""
 
-def extract_jd_criteria(jd_text):
-    jd = jd_text.lower()
-    skills = re.findall(r"(?:skills required|technical skills)[:\-•]*\s*(.*)", jd)
-    edu = re.findall(r"(?:education|qualification)[:\-•]*\s*(.*)", jd)
-    exp = re.findall(r"(\d+)\+?\s*(?:years|yrs)\s*experience", jd)
-    keywords = re.findall(r"(?:responsibilities|expectations)[:\-•]*\s*(.*)", jd)
-    return {
-        "skills": [s.strip() for s in re.split(r"[,\n]", skills[0])] if skills else [],
-        "education": edu[0].strip() if edu else "",
-        "experience": int(exp[0]) if exp else 0,
-        "keywords": [k.strip() for k in re.split(r"[,\n]", keywords[0])] if keywords else []
-    }
+def parse_jd_text(jd_text):
+    lines = jd_text.lower().splitlines()
+    keywords = [line.strip() for line in lines if line.strip()]
+    return keywords
 
-def evaluate_resume(jd, text):
-    rpt = {}
-    t = text.lower()
-    matched_skills = [s for s in jd["skills"] if s.lower() in t]
-    rpt["Skills Match"] = {"matched": len(matched_skills)>= max(1, len(jd["skills"])*0.6), "reason": f"{len(matched_skills)}/{len(jd['skills'])}"}
-    
-    exp_m = re.search(r"(\d+)\+?\s*(?:years|yrs)\s*experience", t)
-    res_exp = int(exp_m.group(1)) if exp_m else 0
-    rpt["Experience Match"] = {"matched": res_exp >= jd["experience"], "reason": f"required {jd['experience']}, found {res_exp}"}
-    
-    edu_ok = jd["education"] and jd["education"].lower() in t
-    rpt["Education Match"] = {"matched": edu_ok, "reason": "found" if edu_ok else "not found"}
-    
-    matches_k = [k for k in jd["keywords"] if k.lower() in t]
-    rpt["Keyword Match"] = {"matched": len(matches_k)>= max(1, len(jd["keywords"])*0.5), "reason": f"{len(matches_k)}/{len(jd['keywords'])}"}
-    
-    weights = {"Skills Match":0.4,"Experience Match":0.3,"Education Match":0.2,"Keyword Match":0.1}
-    score = sum(weights[k]*100 for k,v in rpt.items() if v["matched"])
-    return score, rpt
+def score_resume(resume_text, jd_keywords):
+    resume_text = resume_text.lower()
+    score = 0
+    criteria_details = []
+    for keyword in jd_keywords:
+        if keyword in resume_text:
+            score += 1
+            criteria_details.append((keyword, "✅ Matched"))
+        else:
+            criteria_details.append((keyword, "❌ Not Found"))
+    return score, criteria_details
 
-def process_and_score_resumes(jd_path, resumes_folder):
+def process_and_score_resumes(jd_path, resume_dir):
     jd_text = extract_text(jd_path)
-    print("🔍 Extracted JD (first 500 chars):\n", jd_text[:500])
-    if not jd_text:
-        print("❌ JD extraction failed.")
-        return pd.DataFrame()
+    jd_keywords = parse_jd_text(jd_text)
     
-    jd_crit = extract_jd_criteria(jd_text)
-    print("🏷️ JD criteria extracted:\n", jd_crit)
-    
-    files = [f for f in os.listdir(resumes_folder) if f.lower().endswith((".pdf",".docx",".txt"))]
-    print("📄 Found resumes:", files)
-    if not files:
-        print("❌ No resumes to process.")
-        return pd.DataFrame()
-    
-    rows = []
-    for fname in files:
-        path = os.path.join(resumes_folder, fname)
-        txt = extract_text(path)
-        print(f"-- Processing {fname}, length:", len(txt))
-        if not txt:
-            print("   ⚠️ Skipping, no text.")
+    scores = []
+
+    for fname in os.listdir(resume_dir):
+        path = os.path.join(resume_dir, fname)
+        if not os.path.isfile(path):
             continue
-        
-        score, rep = evaluate_resume(jd_crit, txt)
-        print(f"   ✅ Score: {score}, report: {rep}")
-        rows.append({
-            "Candidate": fname, "Score": round(score,2),
-            "Skills Match": "✅" if rep["Skills Match"]["matched"] else "❌", "Skills Reason": rep["Skills Match"]["reason"],
-            "Experience Match": "✅" if rep["Experience Match"]["matched"] else "❌", "Experience Reason": rep["Experience Match"]["reason"],
-            "Education Match": "✅" if rep["Education Match"]["matched"] else "❌", "Education Reason": rep["Education Match"]["reason"],
-            "Keyword Match": "✅" if rep["Keyword Match"]["matched"] else "❌", "Keyword Reason": rep["Keyword Match"]["reason"],
+        resume_text = extract_text(path)
+        if not resume_text:
+            print(f"🚫 No text found in {fname}")
+            continue
+        score, details = score_resume(resume_text, jd_keywords)
+        percent_score = round((score / len(jd_keywords)) * 100, 2) if jd_keywords else 0
+        feedback = "\n".join([f"{k}: {v}" for k, v in details])
+        scores.append({
+            "Resume": fname,
+            "Score": percent_score,
+            "JD Criteria Feedback": feedback
         })
-    
-    df = pd.DataFrame(rows)
-    return df.sort_values("Score", ascending=False) if not df.empty else df
+
+    return pd.DataFrame(scores).sort_values(by="Score", ascending=False)
