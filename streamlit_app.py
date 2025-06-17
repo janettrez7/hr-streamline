@@ -1,38 +1,39 @@
-# streamlit_app.py
 import streamlit as st
-import zipfile
 import tempfile
 import os
 import pandas as pd
-from resume_scorer import process_and_score_resumes_from_text
+from resume_scorer import process_and_score_resumes
 
 st.set_page_config(page_title="Resume Scorer", layout="centered")
 st.title("📄 AI Resume Scorer")
-st.write("Enter Job Description and upload a ZIP of resumes. Get scores based on JD criteria.")
+st.write("Paste your JD criteria and upload a resume (PDF/DOCX).")
 
-# New: JD input as text box
-jd_text_input = st.text_area("Paste the Job Description here", height=250)
+# JD criteria input
+jd_text = st.text_area("Paste Job Description Criteria (one skill per line or separated by commas):")
 
-# Upload resume ZIP
-resume_zip = st.file_uploader("Upload Resumes (ZIP with PDF/DOCX files)", type="zip")
+# Single resume uploader
+resume_file = st.file_uploader("Upload a Resume (PDF/DOCX)", type=["pdf", "docx"])
 
-if st.button("Run Scoring") and jd_text_input and resume_zip:
+if st.button("Run Scoring") and jd_text and resume_file:
     with tempfile.TemporaryDirectory() as tmpdir:
-        zip_path = os.path.join(tmpdir, resume_zip.name)
-        with open(zip_path, "wb") as f:
-            f.write(resume_zip.read())
+        # Save JD text
+        jd_path = os.path.join(tmpdir, "jd.txt")
+        with open(jd_path, "w", encoding="utf-8") as f:
+            f.write(jd_text)
 
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            resume_dir = os.path.join(tmpdir, "resumes")
-            zip_ref.extractall(resume_dir)
+        # Save resume
+        resume_path = os.path.join(tmpdir, resume_file.name)
+        with open(resume_path, "wb") as f:
+            f.write(resume_file.read())
 
-        results = process_and_score_resumes_from_text(jd_text_input, resume_dir)
+        # Process single resume
+        results = process_and_score_resumes(jd_path, tmpdir)
 
         if results.empty:
-            st.warning("No valid resumes processed or no match found with JD.")
+            st.warning("No valid resume processed or no match found with JD.")
         else:
             st.success("Scoring Complete!")
             st.dataframe(results, use_container_width=True)
 
             csv = results.to_csv(index=False).encode("utf-8")
-            st.download_button("Download Results as CSV", csv, "resume_scores.csv", "text/csv")
+            st.download_button("Download Results as CSV", csv, "resume_score.csv", "text/csv")
