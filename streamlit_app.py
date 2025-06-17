@@ -1,7 +1,8 @@
 
-import streamlit as st
 import os
 import tempfile
+import streamlit as st
+import pandas as pd
 from resume_scorer import process_and_score_resumes
 
 st.set_page_config(page_title="AI Resume Scorer", layout="centered")
@@ -28,6 +29,16 @@ if st.button("Run Scoring"):
             results_df = process_and_score_resumes(jd_path, [resume_path])
 
             st.success("Scoring Complete!")
-            st.dataframe(results_df)
+            st.dataframe(results_df[['Filename', 'Score']])
 
-            st.download_button("Download Results as CSV", data=results_df.to_csv(index=False), file_name="scoring_results.csv", mime="text/csv")
+            for _, row in results_df.iterrows():
+                st.subheader(f"Feedback for {row['Filename']}")
+                st.markdown(f"**Score:** {row['Score']}%")
+                st.markdown(f"**Feedback:**\n\n{row['JD Criteria Feedback']}")
+
+            st.download_button(
+                "Download Results as CSV",
+                data=results_df.to_csv(index=False),
+                file_name="scoring_results.csv",
+                mime="text/csv"
+            )
