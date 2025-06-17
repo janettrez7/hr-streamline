@@ -147,5 +147,8 @@ def process_and_score_resumes(jd_path, resumes_folder):
             "Keyword Reason": report["Keyword Match"]["reason"],
         })
 
-    return pd.DataFrame(scores).sort_values(by="Score", ascending=False)
+    df = pd.DataFrame(scores)
+    if not df.empty and "Score" in df.columns:
+        return df.sort_values(by="Score", ascending=False)
+    return df
 
